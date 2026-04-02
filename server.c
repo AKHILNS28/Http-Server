@@ -62,11 +62,62 @@ int main()
             buffer[bytes] = '\0';  
             char *s = strtok(buffer, " ");
             char *s1 = strtok(NULL, " ");
-            if(s1 != NULL) 
+            if(s1 == NULL) 
             {
-                printf("Requested Path: %s\n", s1);
+                printf("Enter a valid path\n");
+                close(clientfd);
+                continue;
             }
-            send(clientfd, response, strlen(response), 0);
+            if(strcmp(s1,"/")==0)
+            {
+                char *header="HTTP/1.1 200 OK\r\n"
+                         "Content-Type: text/html\r\n"
+                         "\r\n";
+                FILE *fp=fopen("index.html","rb");
+                send(clientfd,header,strlen(header),0);
+                while(1)
+                {
+                    int n=fread(buffer,1,size,fp);
+                    if(n<=0)
+                    {
+                        break;
+                    }
+                    send(clientfd,buffer,n,0);
+                    memset(buffer,0,size);
+                }
+                fclose(fp);
+            }
+            else
+            {
+                FILE *fp=fopen(s1+1,"rb");
+                if(fp==NULL)
+                {
+                    char *response="HTTP/1.1 404 Not Found\r\n"
+                                   "Content-Type: text/html\r\n"
+                                   "\r\n"
+                                   "<h1>404 Not Found</h1>";
+                    send(clientfd,response,strlen(response),0);
+                }
+                else
+                {
+                    char *header="HTTP/1.1 200 OK\r\n"
+                         "Content-Type: text/html\r\n"
+                         "\r\n";
+                    
+                    send(clientfd,header,strlen(header),0);
+                    while(1)
+                    {
+                        int n=fread(buffer,1,size,fp);
+                        if(n<=0)
+                        {
+                            break;
+                        }
+                        send(clientfd,buffer,n,0);
+                        memset(buffer,0,size);
+                    }
+                    fclose(fp);
+                }
+            }
         }
         close(clientfd);
     }
