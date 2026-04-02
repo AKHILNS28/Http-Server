@@ -2,6 +2,7 @@
 #include<stdlib.h>
 #include<string.h>
 #include<ctype.h>
+#include<signal.h>
 #include<sys/socket.h>
 #include<sys/types.h>
 #include<arpa/inet.h>
@@ -80,80 +81,89 @@ int main()
         error("Listen failed");
 
     printf("Server running on port %d...\n", PORT);
-
+    signal(SIGCHLD,SIG_IGN);
     while (1)
     {
         clientfd = accept(sockfd, (struct sockaddr*)&client, &len);
         if (clientfd < 0)
             continue;
-
-        memset(buffer, 0, SIZE);
-        int bytes = recv(clientfd, buffer, SIZE - 1, 0);
-        if (bytes <= 0)
+        int pid=fork();
+        if(pid==0)
+        {
+            memset(buffer, 0, SIZE);
+            int bytes = recv(clientfd, buffer, SIZE - 1, 0);
+            if (bytes <= 0)
+            {
+                close(clientfd);
+                exit(0);
+            }
+            buffer[bytes] = '\0';
+            char *method = strtok(buffer, " ");
+            char *path = strtok(NULL, " ");
+            if (!path)
+            {
+                close(clientfd);
+                exit(0);
+            }
+            if (strstr(path, ".."))
+            {
+                char *resp = "HTTP/1.1 403 Forbidden\r\n\r\n";
+                send(clientfd, resp, strlen(resp), 0);
+                close(clientfd);
+                exit(0);
+            }
+            if (strcmp(path, "/") == 0)
+                path = "/index.html";
+            char filepath[256];
+            snprintf(filepath, sizeof(filepath), "%s", path + 1);
+    
+            FILE *fp = fopen(filepath, "rb");
+            if (!fp)
+            {
+                char *resp =
+                    "HTTP/1.1 404 Not Found\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Content-Length: 22\r\n"
+                    "\r\n"
+                    "<h1>404 Not Found</h1>";
+    
+                send(clientfd, resp, strlen(resp), 0);
+                close(clientfd);
+                exit(0);
+            }
+            fseek(fp, 0, SEEK_END);
+            long filesize = ftell(fp);
+            rewind(fp);
+    
+            char *mime = get_mime_type(filepath);
+            char header[256];
+            snprintf(header, sizeof(header),
+                     "HTTP/1.1 200 OK\r\n"
+                     "%s\r\n"
+                     "Content-Length: %ld\r\n"
+                     "\r\n",
+                     mime, filesize);
+    
+            send(clientfd, header, strlen(header), 0);
+    
+            while (1)
+            {
+                int n = fread(buffer, 1, SIZE, fp);
+                if (n <= 0)
+                    break;
+                send(clientfd, buffer, n, 0);
+            }
+    
+            fclose(fp);
+            free(mime);
+            close(clientfd);
+            exit(0);
+        }
+        else
         {
             close(clientfd);
             continue;
         }
-        buffer[bytes] = '\0';
-        char *method = strtok(buffer, " ");
-        char *path = strtok(NULL, " ");
-        if (!path)
-        {
-            close(clientfd);
-            continue;
-        }
-        if (strstr(path, ".."))
-        {
-            char *resp = "HTTP/1.1 403 Forbidden\r\n\r\n";
-            send(clientfd, resp, strlen(resp), 0);
-            close(clientfd);
-            continue;
-        }
-        if (strcmp(path, "/") == 0)
-            path = "/index.html";
-        char filepath[256];
-        snprintf(filepath, sizeof(filepath), "%s", path + 1);
-
-        FILE *fp = fopen(filepath, "rb");
-        if (!fp)
-        {
-            char *resp =
-                "HTTP/1.1 404 Not Found\r\n"
-                "Content-Type: text/html\r\n"
-                "Content-Length: 22\r\n"
-                "\r\n"
-                "<h1>404 Not Found</h1>";
-
-            send(clientfd, resp, strlen(resp), 0);
-            close(clientfd);
-            continue;
-        }
-        fseek(fp, 0, SEEK_END);
-        long filesize = ftell(fp);
-        rewind(fp);
-
-        char *mime = get_mime_type(filepath);
-        char header[256];
-        snprintf(header, sizeof(header),
-                 "HTTP/1.1 200 OK\r\n"
-                 "%s\r\n"
-                 "Content-Length: %ld\r\n"
-                 "\r\n",
-                 mime, filesize);
-
-        send(clientfd, header, strlen(header), 0);
-
-        while (1)
-        {
-            int n = fread(buffer, 1, SIZE, fp);
-            if (n <= 0)
-                break;
-            send(clientfd, buffer, n, 0);
-        }
-
-        fclose(fp);
-        free(mime);
-        close(clientfd);
     }
     close(sockfd);
     return 0;
